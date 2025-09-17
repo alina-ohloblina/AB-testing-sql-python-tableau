@@ -1,0 +1,118 @@
+
+import numpy as np
+import pandas as pd
+from scipy.stats import norm
+from google.colab import drive
+
+
+metrics_to_test = [
+    "begin_checkout",    # % users who added to cart
+    "add_shipping_info", # % users started the delivery
+    "add_payment_info",  # % users taht added payment info
+    "new account"        # % users creating new acc
+]
+
+denominators_to_test = [
+    "add_to_cart",       # begin_checkout
+    "begin_checkout",    # add_shipping_info
+    "begin_checkout",    # add_payment_info
+    "session"            # new account
+]
+
+# Core metrics by the task
+base_metrics = [
+    ("add_payment_info", "session"),
+    ("add_shipping_info", "session"),
+    ("begin_checkout", "session"),
+    ("new account", "session")
+]
+
+# adding metrics
+for num_ev, den_ev in base_metrics:
+    if not any(m == num_ev and d == den_ev for m, d in zip(metrics_to_test, denominators_to_test)):
+        metrics_to_test.append(num_ev)
+        denominators_to_test.append(den_ev)
+
+
+def z_test_prop(x1, n1, x2, n2):
+    if n1 == 0 or n2 == 0:
+        return np.nan, np.nan
+    p1 = x1 / n1
+    p2 = x2 / n2
+    p_pool = (x1 + x2) / (n1 + n2)
+    se_term = p_pool * (1 - p_pool) * (1/n1 + 1/n2)
+    if se_term <= 0:
+        return np.nan, np.nan
+    se = np.sqrt(se_term)
+    z = (p2 - p1) / se
+    p_val = 2 * (1 - norm.cdf(abs(z)))
+    return z, p_val
+
+results = []
+
+
+for test_value in df["test"].unique():
+    test_subset = df[df["test"] == test_value]
+    control = test_subset[test_subset["test_group"] == 1]
+    experiment = test_subset[test_subset["test_group"] == 2]
+
+    if control.empty or experiment.empty:
+        continue
+
+  
+    for i in range(len(metrics_to_test)):
+        num_ev = metrics_to_test[i]
+        den_ev = denominators_to_test[i]
+
+        
+        num_control = control.loc[control["event_name"] == num_ev, "value"].sum()
+        num_experiment = experiment.loc[experiment["event_name"] == num_ev, "value"].sum()
+
+       
+        if den_ev == "session":
+            # count of unique sessions
+            den_control = control["session_id"].nunique() if "session_id" in control.columns else control.loc[control["event_name"] == "session", "value"].sum()
+            den_experiment = experiment["session_id"].nunique() if "session_id" in experiment.columns else experiment.loc[experiment["event_name"] == "session", "value"].sum()
+        else:
+            den_control = control.loc[control["event_name"] == den_ev, "value"].sum()
+            den_experiment = experiment.loc[experiment["event_name"] == den_ev, "value"].sum()
+
+        # Missing the 0 values (0 is not possible to count)
+        if den_control == 0 or den_experiment == 0:
+            continue
+
+        # Conc count
+        convA = num_control / den_control
+        convB = num_experiment / den_experiment
+        metric_change = ((convB - convA) / convA) * 100
+
+        # Stat value
+        z_stat, p_val = z_test_prop(num_control, den_control, num_experiment, den_experiment)
+
+        # Saving the result
+        results.append({
+            'test_number': test_value,
+            'metric': f"{num_ev} / {den_ev}",
+            'numerator_event': num_ev,
+            'denominator_event': den_ev,
+            'numerator_converse_A': int(num_control),
+            'denominator_converse_A': int(den_control),
+            'conversion_rate_A': f"{convA:.10f}",
+            'numerator_converse_B': int(num_experiment),
+            'denominator_converse_B': int(den_experiment),
+            'conversion_rate_B': f"{convB:.10f}",
+            'metric_change': f"{metric_change:.10f}",
+            'z_stat': f"{z_stat:.10f}" if not np.isnan(z_stat) else np.nan,
+            'p_value': f"{p_val:.10f}" if not np.isnan(p_val) else np.nan,
+            'significant': p_val < 0.05 if not np.isnan(p_val) else False
+        })
+
+# Data frame with results
+results_df = pd.DataFrame(results)
+print(results_df)
+
+# Saving to GD
+drive.mount('/content/drive')
+path = '/content/drive/My Drive/PORTFOLIO2.csv'
+results_df.to_csv(path, index=False)
+print(f"Saved to: {path}")
